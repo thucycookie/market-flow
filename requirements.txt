@@ -6,8 +6,8 @@ google-api-python-client>=2.0.0
 google-auth>=2.0.0
 google-auth-oauthlib>=1.0.0
 
-# PDF Generation
-weasyprint>=60.0
+# PDF Generation (pure Python, no system deps)
+fpdf2>=2.7.0
 
 # Utilities
 python-dotenv>=1.0.0

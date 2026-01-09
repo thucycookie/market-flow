@@ -55,7 +55,7 @@ def _get_google_docs_credentials(credentials_path: str = "credentials.json") -> 
 
 def _generate_pdf(content: str, output_path: str) -> str:
     """
-    Generate a PDF from markdown/text content.
+    Generate a PDF from markdown/text content using fpdf2 (pure Python).
 
     Args:
         content: The text/markdown content.
@@ -64,118 +64,92 @@ def _generate_pdf(content: str, output_path: str) -> str:
     Returns:
         The path to the generated PDF.
     """
-    from weasyprint import HTML, CSS
-
-    # Convert markdown-style content to basic HTML
-    html_content = _markdown_to_html(content)
-
-    # Basic styling
-    css = CSS(string="""
-        @page {
-            margin: 1in;
-            size: letter;
-        }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            font-size: 11pt;
-            line-height: 1.6;
-            color: #333;
-        }
-        h1 { font-size: 24pt; margin-top: 0; color: #1a1a1a; }
-        h2 { font-size: 18pt; margin-top: 24pt; color: #2a2a2a; }
-        h3 { font-size: 14pt; margin-top: 18pt; color: #3a3a3a; }
-        p { margin: 12pt 0; }
-        ul, ol { margin: 12pt 0; padding-left: 24pt; }
-        li { margin: 6pt 0; }
-        blockquote {
-            border-left: 3px solid #ccc;
-            margin: 12pt 0;
-            padding-left: 12pt;
-            color: #666;
-        }
-        code {
-            background: #f4f4f4;
-            padding: 2pt 4pt;
-            border-radius: 3pt;
-            font-family: 'SF Mono', Consolas, monospace;
-            font-size: 10pt;
-        }
-        pre {
-            background: #f4f4f4;
-            padding: 12pt;
-            border-radius: 4pt;
-            overflow-x: auto;
-        }
-        a { color: #0066cc; }
-        hr { border: none; border-top: 1px solid #ddd; margin: 24pt 0; }
-    """)
-
-    HTML(string=html_content).write_pdf(output_path, stylesheets=[css])
-    return output_path
-
-
-def _markdown_to_html(content: str) -> str:
-    """Convert basic markdown to HTML."""
+    from fpdf import FPDF
     import re
 
-    html = content
+    def sanitize_text(text):
+        """Replace Unicode characters with ASCII equivalents."""
+        replacements = {
+            '\u2022': '-',   # bullet
+            '\u2019': "'",   # right single quote
+            '\u2018': "'",   # left single quote
+            '\u201c': '"',   # left double quote
+            '\u201d': '"',   # right double quote
+            '\u2014': '--',  # em dash
+            '\u2013': '-',   # en dash
+            '\u2026': '...', # ellipsis
+            '\u00a0': ' ',   # non-breaking space
+        }
+        for char, replacement in replacements.items():
+            text = text.replace(char, replacement)
+        # Remove any remaining non-latin1 characters
+        return text.encode('latin-1', errors='replace').decode('latin-1')
 
-    # Headers
-    html = re.sub(r'^### (.+)$', r'<h3>\1</h3>', html, flags=re.MULTILINE)
-    html = re.sub(r'^## (.+)$', r'<h2>\1</h2>', html, flags=re.MULTILINE)
-    html = re.sub(r'^# (.+)$', r'<h1>\1</h1>', html, flags=re.MULTILINE)
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.set_margins(left=15, top=15, right=15)
+    pdf.add_page()
+    pdf.set_font('Helvetica', '', 10)  # Set default font
 
-    # Bold and italic
-    html = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', html)
-    html = re.sub(r'\*(.+?)\*', r'<em>\1</em>', html)
+    # Process content line by line
+    lines = content.split('\n')
 
-    # Code blocks
-    html = re.sub(r'```[\w]*\n(.*?)\n```', r'<pre><code>\1</code></pre>', html, flags=re.DOTALL)
-    html = re.sub(r'`(.+?)`', r'<code>\1</code>', html)
-
-    # Links
-    html = re.sub(r'\[(.+?)\]\((.+?)\)', r'<a href="\2">\1</a>', html)
-
-    # Blockquotes
-    html = re.sub(r'^> (.+)$', r'<blockquote>\1</blockquote>', html, flags=re.MULTILINE)
-
-    # Horizontal rules
-    html = re.sub(r'^---+$', r'<hr>', html, flags=re.MULTILINE)
-
-    # Unordered lists (basic)
-    lines = html.split('\n')
-    in_list = False
-    result = []
     for line in lines:
-        if re.match(r'^[-*] ', line):
-            if not in_list:
-                result.append('<ul>')
-                in_list = True
-            result.append(f'<li>{line[2:]}</li>')
+        line = line.rstrip()
+
+        # Skip empty lines but add spacing
+        if not line:
+            pdf.ln(4)
+            continue
+
+        # Headers
+        if line.startswith('### '):
+            pdf.set_font('Helvetica', 'B', 12)
+            pdf.ln(6)
+            pdf.multi_cell(0, 6, sanitize_text(line[4:]), new_x='LMARGIN', new_y='NEXT')
+            pdf.ln(2)
+        elif line.startswith('## '):
+            pdf.set_font('Helvetica', 'B', 14)
+            pdf.ln(8)
+            pdf.multi_cell(0, 7, sanitize_text(line[3:]), new_x='LMARGIN', new_y='NEXT')
+            pdf.ln(3)
+        elif line.startswith('# '):
+            pdf.set_font('Helvetica', 'B', 18)
+            pdf.ln(10)
+            pdf.multi_cell(0, 9, sanitize_text(line[2:]), new_x='LMARGIN', new_y='NEXT')
+            pdf.ln(4)
+        # Bullet points
+        elif line.startswith('* ') or line.startswith('- '):
+            pdf.set_font('Helvetica', '', 10)
+            # Remove markdown formatting from text
+            text = re.sub(r'\*\*(.+?)\*\*', r'\1', line[2:])
+            text = re.sub(r'\[(.+?)\]\(.+?\)', r'\1', text)
+            pdf.multi_cell(0, 5, sanitize_text(f"  - {text}"), new_x='LMARGIN', new_y='NEXT')
+        # Horizontal rule
+        elif line.startswith('---'):
+            pdf.ln(4)
+            pdf.set_draw_color(200, 200, 200)
+            pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+            pdf.ln(4)
+        # Table rows (basic support)
+        elif line.startswith('|'):
+            pdf.set_font('Courier', '', 8)
+            # Clean up table formatting
+            text = line.replace('|', ' | ').strip()
+            pdf.multi_cell(0, 4, sanitize_text(text), new_x='LMARGIN', new_y='NEXT')
+        # Regular text
         else:
-            if in_list:
-                result.append('</ul>')
-                in_list = False
-            result.append(line)
-    if in_list:
-        result.append('</ul>')
-    html = '\n'.join(result)
+            pdf.set_font('Helvetica', '', 10)
+            # Remove markdown formatting
+            text = re.sub(r'\*\*(.+?)\*\*', r'\1', line)
+            text = re.sub(r'\*(.+?)\*', r'\1', text)
+            text = re.sub(r'\[(.+?)\]\((.+?)\)', r'\1 (\2)', text)
+            text = re.sub(r'`(.+?)`', r'\1', text)
+            text = re.sub(r'\[cite: [\d, ]+\]', '', text)  # Remove citations
+            pdf.multi_cell(0, 5, sanitize_text(text), new_x='LMARGIN', new_y='NEXT')
 
-    # Paragraphs (wrap remaining text blocks)
-    paragraphs = html.split('\n\n')
-    processed = []
-    for p in paragraphs:
-        p = p.strip()
-        if p and not p.startswith('<'):
-            p = f'<p>{p}</p>'
-        processed.append(p)
-    html = '\n'.join(processed)
-
-    return f"""<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"></head>
-<body>{html}</body>
-</html>"""
+    pdf.output(output_path)
+    return output_path
 
 
 def _create_google_doc(
