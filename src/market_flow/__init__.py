@@ -17,6 +17,7 @@ from market_flow.document_store import (
 
 from market_flow.deep_research import (
     research,
+    research_async,
     research_stream,
 )
 
@@ -33,5 +34,6 @@ __all__ = [
     "extract_doc_id",
     # Deep Research
     "research",
+    "research_async",
     "research_stream",
 ]

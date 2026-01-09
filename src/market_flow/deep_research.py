@@ -4,6 +4,7 @@ Deep Research Module
 Executes Gemini Deep Research and outputs results as PDF or Google Doc.
 """
 
+import asyncio
 import os
 import time
 import tempfile
@@ -371,3 +372,122 @@ def research_stream(
                 on_chunk(text)
 
     return "".join(full_output)
+
+
+async def research_async(
+    prompt: str,
+    file_store_names: list[str] | None = None,
+    output_format: str = "pdf",
+    output_path: str | None = None,
+    api_key: str | None = None,
+    credentials_path: str = "credentials.json",
+    poll_interval: int = 10,
+    on_status: Callable[[str], None] | None = None
+) -> str:
+    """
+    Async version of research(). Execute Gemini Deep Research and generate output.
+
+    This is useful when you want to run multiple research tasks concurrently
+    or integrate with async web frameworks.
+
+    Args:
+        prompt: The research prompt/question.
+        file_store_names: Optional list of File Search Store names for context.
+        output_format: Output format - "pdf" or "gdoc".
+        output_path: Path for PDF output (ignored for gdoc). Auto-generated if None.
+        api_key: Google AI API key. If None, uses GOOGLE_API_KEY env var.
+        credentials_path: Path to Google OAuth credentials (for gdoc output).
+        poll_interval: Seconds between status checks.
+        on_status: Optional callback for status updates.
+
+    Returns:
+        Path to PDF file or URL to Google Doc.
+
+    Raises:
+        ValueError: If invalid output_format or missing API key.
+        RuntimeError: If research fails or times out.
+
+    Example:
+        ```python
+        import asyncio
+        from market_flow import research_async
+
+        async def main():
+            # Run multiple research tasks concurrently
+            results = await asyncio.gather(
+                research_async("Research topic A"),
+                research_async("Research topic B"),
+                research_async("Research topic C"),
+            )
+            for result in results:
+                print(f"Output: {result}")
+
+        asyncio.run(main())
+        ```
+    """
+    if output_format not in ("pdf", "gdoc"):
+        raise ValueError(f"Invalid output_format: {output_format}. Use 'pdf' or 'gdoc'.")
+
+    api_key = api_key or os.environ.get("GOOGLE_API_KEY")
+    if not api_key:
+        raise ValueError("API key required. Set GOOGLE_API_KEY or pass api_key parameter.")
+
+    client = genai.Client(api_key=api_key)
+
+    # Build tools configuration
+    tools = None
+    if file_store_names:
+        tools = [
+            {
+                "type": "file_search",
+                "file_search_store_names": file_store_names
+            }
+        ]
+
+    # Start the research task
+    if on_status:
+        on_status("Starting Deep Research...")
+
+    interaction = client.interactions.create(
+        input=prompt,
+        agent=DEEP_RESEARCH_AGENT,
+        background=True,
+        tools=tools
+    )
+
+    # Poll for completion asynchronously
+    while True:
+        interaction = client.interactions.get(interaction.id)
+        status = interaction.status
+
+        if on_status:
+            on_status(f"Status: {status}")
+
+        if status == "completed":
+            break
+        elif status in ("failed", "cancelled"):
+            error_msg = getattr(interaction, "error", "Unknown error")
+            raise RuntimeError(f"Research {status}: {error_msg}")
+
+        await asyncio.sleep(poll_interval)
+
+    # Extract the research output
+    if not interaction.outputs:
+        raise RuntimeError("Research completed but no output was generated.")
+
+    research_output = interaction.outputs[-1].text
+
+    if on_status:
+        on_status("Research complete. Generating output...")
+
+    # Generate output in requested format
+    if output_format == "pdf":
+        if output_path is None:
+            safe_name = "".join(c if c.isalnum() else "_" for c in prompt[:50])
+            output_path = f"{safe_name}_research.pdf"
+
+        return _generate_pdf(research_output, output_path)
+
+    else:  # gdoc
+        title = f"Research: {prompt[:100]}"
+        return _create_google_doc(title, research_output, credentials_path)
