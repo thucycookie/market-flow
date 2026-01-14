@@ -133,7 +133,7 @@ def create_store(
     client = genai.Client(api_key=api_key)
 
     store = client.file_search_stores.create(
-        display_name=name
+        config={"display_name": name}
     )
 
     return store.name
@@ -178,15 +178,20 @@ def upload_google_docs(
             tmp_path = tmp_file.name
 
         try:
-            # Upload file to Gemini Files API
-            uploaded_file = client.files.upload(file=tmp_path)
-
-            # Import the file into the File Search Store
-            client.file_search_stores.documents.create(
-                parent=store_name,
-                file=uploaded_file.name,
-                display_name=title
+            # Upload file directly to the File Search Store
+            operation = client.file_search_stores.upload_to_file_search_store(
+                file_search_store_name=store_name,
+                file=tmp_path,
             )
+
+            # Poll for completion
+            while not operation.done:
+                import time
+                time.sleep(5)
+                operation = client.operations.get(operation=operation)
+
+            if operation.error:
+                raise RuntimeError(f"Upload failed for {title}: {operation.error}")
 
             uploaded_docs.append(title)
         finally:
@@ -199,7 +204,8 @@ def upload_google_docs(
 def upload_files(
     store_name: str,
     file_paths: list[str],
-    api_key: str | None = None
+    api_key: str | None = None,
+    poll_interval: int = 5,
 ) -> list[str]:
     """
     Upload local files to a File Search Store.
@@ -208,10 +214,13 @@ def upload_files(
         store_name: The File Search Store name.
         file_paths: List of local file paths.
         api_key: Google AI API key. If None, uses GOOGLE_API_KEY env var.
+        poll_interval: Seconds between polling for upload completion.
 
     Returns:
         List of uploaded document names.
     """
+    import time
+
     api_key = api_key or os.environ.get("GOOGLE_API_KEY")
     if not api_key:
         raise ValueError("API key required. Set GOOGLE_API_KEY or pass api_key parameter.")
@@ -224,15 +233,19 @@ def upload_files(
         if not path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
 
-        # Upload file to Gemini Files API
-        uploaded_file = client.files.upload(file=str(path))
-
-        # Import the file into the File Search Store
-        client.file_search_stores.documents.create(
-            parent=store_name,
-            file=uploaded_file.name,
-            display_name=path.stem
+        # Upload file directly to the File Search Store
+        operation = client.file_search_stores.upload_to_file_search_store(
+            file_search_store_name=store_name,
+            file=str(path),
         )
+
+        # Poll for completion
+        while not operation.done:
+            time.sleep(poll_interval)
+            operation = client.operations.get(operation=operation)
+
+        if operation.error:
+            raise RuntimeError(f"Upload failed for {path.name}: {operation.error}")
 
         uploaded_docs.append(path.stem)
 
@@ -244,7 +257,7 @@ def delete_store(
     api_key: str | None = None
 ) -> None:
     """
-    Delete a File Search Store.
+    Delete a File Search Store and all its documents.
 
     Args:
         store_name: The File Search Store name to delete.
@@ -255,6 +268,19 @@ def delete_store(
         raise ValueError("API key required. Set GOOGLE_API_KEY or pass api_key parameter.")
 
     client = genai.Client(api_key=api_key)
+
+    # First delete all documents in the store
+    try:
+        docs = client.file_search_stores.documents.list(parent=store_name)
+        for doc in docs:
+            try:
+                client.file_search_stores.documents.delete(name=doc.name)
+            except Exception:
+                pass  # Ignore deletion errors for individual docs
+    except Exception:
+        pass  # Store might already be empty
+
+    # Then delete the store
     client.file_search_stores.delete(name=store_name)
 
 

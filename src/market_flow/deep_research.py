@@ -429,9 +429,20 @@ async def research_async(
         tools=tools
     )
 
-    # Poll for completion asynchronously
+    # Poll for completion asynchronously with retry for transient errors
+    max_retries = 3
     while True:
-        interaction = client.interactions.get(interaction.id)
+        retries = 0
+        while retries < max_retries:
+            try:
+                interaction = client.interactions.get(interaction.id)
+                break
+            except Exception as e:
+                retries += 1
+                if retries >= max_retries:
+                    raise RuntimeError(f"Failed to get interaction status after {max_retries} retries: {e}")
+                await asyncio.sleep(5)  # Wait before retry
+
         status = interaction.status
 
         if on_status:
