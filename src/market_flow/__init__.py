@@ -27,6 +27,11 @@ from market_flow.drive_uploader import (
     delete_from_drive,
 )
 
+from market_flow.company_analysis_workflow import (
+    run_company_analysis,
+    run_company_analysis_sync,
+)
+
 __version__ = "0.1.0"
 
 __all__ = [
@@ -46,4 +51,7 @@ __all__ = [
     "upload_to_drive",
     "list_files_in_folder",
     "delete_from_drive",
+    # Company Analysis Workflow
+    "run_company_analysis",
+    "run_company_analysis_sync",
 ]
