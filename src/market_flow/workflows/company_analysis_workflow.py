@@ -15,9 +15,9 @@ import asyncio
 from pathlib import Path
 from typing import Callable
 
-from .deep_research import research_async
-from .drive_uploader import upload_to_drive
-from .document_store import create_store, upload_files, delete_store
+from ..deep_research import research_async
+from ..drive_uploader import upload_to_drive
+from ..document_store import create_store, upload_files, delete_store
 
 
 def _build_industry_prompt(company_name: str) -> str:
