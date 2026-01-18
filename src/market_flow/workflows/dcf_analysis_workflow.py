@@ -11,6 +11,8 @@ Orchestrates the complete DCF analysis pipeline:
 from datetime import datetime
 from typing import Callable
 
+import tempfile
+
 from ..market_data.fmp_client import (
     get_company_profile,
     get_income_statement,
@@ -19,7 +21,7 @@ from ..market_data.fmp_client import (
 from ..models.dcf_model import build_dcf_model, DCFResult
 from ..agents.dcf_analyst_agent import analyze_dcf
 from ..drive_uploader import upload_to_drive
-from ..deep_research import _create_google_doc
+from ..deep_research import _generate_pdf
 
 
 def _format_dcf_report(
@@ -206,7 +208,6 @@ def run_dcf_analysis(
     drive_folder_id: str | None = None,
     projection_years: int = 5,
     terminal_growth_rate: float = 0.025,
-    credentials_path: str = "credentials.json",
     on_status: Callable[[str], None] | None = None,
 ) -> dict:
     """
@@ -224,7 +225,6 @@ def run_dcf_analysis(
         drive_folder_id: Google Drive folder ID to upload to (None = root)
         projection_years: Number of years to project (default: 5)
         terminal_growth_rate: Long-term growth rate (default: 2.5%)
-        credentials_path: Path to Google OAuth credentials
         on_status: Optional callback for status updates
 
     Returns:
@@ -282,14 +282,26 @@ def run_dcf_analysis(
         earnings_history=earnings_history,
     )
 
-    # Step 5: Upload to Google Drive
-    _status("Creating Google Doc...")
+    # Step 5: Generate PDF and upload to Google Drive
+    _status("Generating PDF...")
     doc_title = f"DCF Analysis - {dcf_result.company_name} ({ticker})"
-    doc_url = _create_google_doc(
-        title=doc_title,
-        content=report_content,
-        credentials_path=credentials_path,
+
+    # Create a temporary PDF file
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+        pdf_path = tmp.name
+
+    _generate_pdf(report_content, pdf_path)
+    _status("PDF generated, uploading to Google Drive...")
+
+    # Upload to Drive and convert to Google Doc
+    result = upload_to_drive(
+        file_path=pdf_path,
+        folder_id=drive_folder_id,
+        convert_to_doc=True,
+        delete_local=True,
+        file_name=doc_title,
     )
+    doc_url = result["url"]
     _status(f"Google Doc created: {doc_url}")
 
     return {

@@ -287,7 +287,11 @@ def build_dcf_model(
     company_name = profile.get("companyName", ticker)
     beta = profile.get("beta", 1.0) or 1.0
     current_price = quote.get("price", 0)
+    # Calculate shares outstanding from market cap if not directly available
     shares_outstanding = quote.get("sharesOutstanding", 0)
+    if not shares_outstanding and current_price > 0:
+        market_cap = quote.get("marketCap", 0) or profile.get("marketCap", 0)
+        shares_outstanding = market_cap / current_price if market_cap else 0
 
     # Get most recent balance sheet data
     latest_bs = balance_sheets[0] if balance_sheets else {}

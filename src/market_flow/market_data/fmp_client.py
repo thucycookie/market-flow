@@ -2,6 +2,7 @@
 Financial Modeling Prep (FMP) Client
 
 Wrapper around the FMP API for fetching financial data.
+Uses the stable API endpoints (not legacy v3).
 """
 
 import os
@@ -10,7 +11,7 @@ from typing import Literal
 import requests
 
 
-FMP_BASE_URL = "https://financialmodelingprep.com/api/v3"
+FMP_BASE_URL = "https://financialmodelingprep.com/stable"
 
 
 def _get_api_key() -> str:
@@ -25,7 +26,7 @@ def _get_api_key() -> str:
 
 
 def _make_request(endpoint: str, params: dict | None = None) -> dict | list:
-    """Make a request to the FMP API."""
+    """Make a request to the FMP stable API."""
     api_key = _get_api_key()
 
     params = params or {}
@@ -57,7 +58,7 @@ def get_company_profile(ticker: str) -> dict:
         - description, ceo, fullTimeEmployees
         - website, country, city
     """
-    data = _make_request(f"profile/{ticker.upper()}")
+    data = _make_request("profile", params={"symbol": ticker.upper()})
     if not data:
         raise ValueError(f"No profile found for ticker: {ticker}")
     return data[0] if isinstance(data, list) else data
@@ -84,8 +85,8 @@ def get_income_statement(
         - date, period, calendarYear
     """
     data = _make_request(
-        f"income-statement/{ticker.upper()}",
-        params={"period": period, "limit": limit},
+        "income-statement",
+        params={"symbol": ticker.upper(), "period": period, "limit": limit},
     )
     return data if isinstance(data, list) else [data]
 
@@ -111,8 +112,8 @@ def get_balance_sheet(
         - date, period, calendarYear
     """
     data = _make_request(
-        f"balance-sheet-statement/{ticker.upper()}",
-        params={"period": period, "limit": limit},
+        "balance-sheet-statement",
+        params={"symbol": ticker.upper(), "period": period, "limit": limit},
     )
     return data if isinstance(data, list) else [data]
 
@@ -139,8 +140,8 @@ def get_cash_flow(
         - date, period, calendarYear
     """
     data = _make_request(
-        f"cash-flow-statement/{ticker.upper()}",
-        params={"period": period, "limit": limit},
+        "cash-flow-statement",
+        params={"symbol": ticker.upper(), "period": period, "limit": limit},
     )
     return data if isinstance(data, list) else [data]
 
@@ -168,8 +169,8 @@ def get_financial_ratios(
         - date, period
     """
     data = _make_request(
-        f"ratios/{ticker.upper()}",
-        params={"period": period, "limit": limit},
+        "ratios",
+        params={"symbol": ticker.upper(), "period": period, "limit": limit},
     )
     return data if isinstance(data, list) else [data]
 
@@ -196,8 +197,8 @@ def get_key_metrics(
         - date, period
     """
     data = _make_request(
-        f"key-metrics/{ticker.upper()}",
-        params={"period": period, "limit": limit},
+        "key-metrics",
+        params={"symbol": ticker.upper(), "period": period, "limit": limit},
     )
     return data if isinstance(data, list) else [data]
 
@@ -218,8 +219,8 @@ def get_earnings_history(ticker: str, limit: int = 20) -> list[dict]:
         - epsSurprise, epsSurprisePercent (calculated if available)
     """
     data = _make_request(
-        f"historical/earning_calendar/{ticker.upper()}",
-        params={"limit": limit},
+        "earnings",
+        params={"symbol": ticker.upper(), "limit": limit},
     )
     return data if isinstance(data, list) else [data]
 
@@ -239,7 +240,7 @@ def get_quote(ticker: str) -> dict:
         - yearHigh, yearLow
         - sharesOutstanding
     """
-    data = _make_request(f"quote/{ticker.upper()}")
+    data = _make_request("quote", params={"symbol": ticker.upper()})
     if not data:
         raise ValueError(f"No quote found for ticker: {ticker}")
     return data[0] if isinstance(data, list) else data
@@ -258,7 +259,7 @@ def get_dcf(ticker: str) -> dict:
         - dcf (intrinsic value per share)
         - Stock Price
     """
-    data = _make_request(f"discounted-cash-flow/{ticker.upper()}")
+    data = _make_request("discounted-cash-flow", params={"symbol": ticker.upper()})
     if not data:
         raise ValueError(f"No DCF data found for ticker: {ticker}")
     return data[0] if isinstance(data, list) else data
@@ -285,7 +286,7 @@ def get_analyst_estimates(
         - date
     """
     data = _make_request(
-        f"analyst-estimates/{ticker.upper()}",
-        params={"period": period, "limit": limit},
+        "analyst-estimates",
+        params={"symbol": ticker.upper(), "period": period, "limit": limit},
     )
     return data if isinstance(data, list) else [data]
