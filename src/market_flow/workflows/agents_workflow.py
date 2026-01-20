@@ -17,6 +17,50 @@ from ..agents import FinancialModelingAgent, BossAgent
 from ..deep_research import _generate_pdf
 from ..drive_uploader import upload_to_drive as drive_upload
 
+# Google Drive folder IDs for traceability uploads
+MODELING_AGENT_FOLDER_ID = "1hw8m16wtxB4kTuoLil2y2jBhiOTvkxVQ"
+BOSS_AGENT_FOLDER_ID = "1EW4zT647OMevTW8Si3EBMptSOHtI_WOI"
+
+
+def _upload_analysis_to_drive(
+    content: str,
+    ticker: str,
+    folder_id: str,
+    label: str = "analysis",
+    on_status: Callable[[str], None] | None = None,
+) -> dict:
+    """
+    Generate PDF from content and upload to Google Drive, then delete local file.
+
+    Args:
+        content: The analysis text to upload
+        ticker: Stock ticker for naming
+        folder_id: Google Drive folder ID
+        label: Label for the file (e.g., "initial_analysis", "refinement_1")
+        on_status: Optional status callback
+
+    Returns:
+        dict with 'url' key containing the Google Drive URL
+    """
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    pdf_filename = f"{ticker.upper()}_{label}_{timestamp}.pdf"
+    pdf_path = os.path.join(tempfile.gettempdir(), pdf_filename)
+
+    _generate_pdf(content, pdf_path)
+
+    if on_status:
+        on_status(f"Uploading {label.replace('_', ' ')} to Drive...")
+
+    drive_result = drive_upload(
+        file_path=pdf_path,
+        folder_id=folder_id,
+        convert_to_doc=True,
+        delete_local=True,  # Clean up local PDF after upload
+        file_name=f"{ticker.upper()} {label.replace('_', ' ').title()} - {timestamp}"
+    )
+
+    return {"url": drive_result["url"]}
+
 
 async def run_agents_workflow(
     ticker: str,
@@ -48,7 +92,8 @@ async def run_agents_workflow(
             - iterations: Number of review iterations performed
             - review_history: List of review results from each iteration
             - drive_url: URL to the Google Drive file (if uploaded)
-            - pdf_path: Local path to the generated PDF
+            - pdf_path: None (local files are deleted after upload)
+            - analysis_urls: List of intermediate analysis uploads for traceability
 
     Example:
         >>> import asyncio
@@ -69,6 +114,17 @@ async def run_agents_workflow(
     _status(f"Running initial analysis for {ticker}...")
     result = await modeling_agent.analyze(ticker)
     current_analysis = result["analysis"]
+
+    # Upload initial analysis for traceability
+    analysis_urls = []
+    initial_upload = _upload_analysis_to_drive(
+        content=current_analysis,
+        ticker=ticker,
+        folder_id=MODELING_AGENT_FOLDER_ID,
+        label="initial_analysis",
+        on_status=_status,
+    )
+    analysis_urls.append({"iteration": 0, "type": "initial", "url": initial_upload["url"]})
 
     review_history = []
     iteration = 0
@@ -103,6 +159,16 @@ async def run_agents_workflow(
         )
         current_analysis = refined["analysis"]
 
+        # Upload refinement for traceability
+        refinement_upload = _upload_analysis_to_drive(
+            content=current_analysis,
+            ticker=ticker,
+            folder_id=MODELING_AGENT_FOLDER_ID,
+            label=f"refinement_iteration_{iteration}",
+            on_status=_status,
+        )
+        analysis_urls.append({"iteration": iteration, "type": "refinement", "url": refinement_upload["url"]})
+
     # Build result dict
     workflow_result = {
         "ticker": ticker.upper(),
@@ -112,6 +178,7 @@ async def run_agents_workflow(
         "review_history": review_history,
         "drive_url": None,
         "pdf_path": None,
+        "analysis_urls": analysis_urls,
     }
 
     # Generate PDF and upload (either approved or max iterations reached)
@@ -125,7 +192,6 @@ async def run_agents_workflow(
         pdf_path = os.path.join(tempfile.gettempdir(), pdf_filename)
 
         _generate_pdf(current_analysis, pdf_path)
-        workflow_result["pdf_path"] = pdf_path
 
         _status("Uploading to Google Drive...")
 
@@ -134,7 +200,7 @@ async def run_agents_workflow(
             file_path=pdf_path,
             folder_id=folder_id,
             convert_to_doc=True,
-            delete_local=False,  # Keep local copy
+            delete_local=True,  # Clean up local PDF after upload
             file_name=f"{ticker.upper()} Financial Analysis - {timestamp}"
         )
 

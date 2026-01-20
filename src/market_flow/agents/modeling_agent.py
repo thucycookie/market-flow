@@ -80,6 +80,27 @@ Combine all insights into a comprehensive investment recommendation:
 You have access to market data and DCF modeling tools:
 - Market data: company profile, financial statements, ratios, metrics, quotes
 - DCF model: WACC calculation, FCF projection, terminal value, intrinsic value
+
+## Reasoning Documentation (CRITICAL)
+
+Your analysis will be reviewed by senior analysts. Document your reasoning clearly:
+
+### Tool Usage Rationale
+For each tool you call, briefly explain:
+- **Why** you're calling this tool at this point
+- **What** you expect to learn from it
+- **How** it connects to your analysis workflow
+
+Example:
+"I'm fetching the income statement to examine revenue growth trends over 5 years.
+This will help me determine if the company is in a growth or mature phase,
+which affects my choice of valuation model."
+
+### Assumption Documentation
+Whenever you make an assumption, state it explicitly:
+- Growth rate assumptions: "Assuming 8% revenue growth based on 5-year historical CAGR of 7.2%"
+- Discount rate choices: "Using 10% WACC because beta of 1.2 and current risk-free rate of 4.5%"
+- Terminal value assumptions: "Terminal growth of 2.5% aligned with long-term GDP growth"
 """
 
 
@@ -104,6 +125,11 @@ You have access to market data and DCF modeling tools:
    "TOOL LIMITATION: [describe what was requested and why it cannot be fulfilled]"
 4. Maintain the same professional format as the original analysis
 5. Clearly mark sections that have been revised with "[REVISED]" prefix
+
+### Reasoning Documentation
+Continue to document:
+- **Tool Usage Rationale**: Explain why you're calling each tool to address the feedback
+- **Assumption Changes**: If you're revising assumptions, state the old value, new value, and why
 """
 
 
