@@ -19,7 +19,7 @@ from ..market_data.fmp_client import (
     get_earnings_history,
 )
 from ..models.dcf_model import build_dcf_model, DCFResult
-from ..agents.dcf_analyst_agent import analyze_dcf
+from ..agents import analyze_dcf
 from ..drive_uploader import upload_to_drive
 from ..deep_research import _generate_pdf
 
