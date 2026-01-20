@@ -14,10 +14,18 @@ from .dcf_analysis_workflow import (
     run_dcf_analysis,
 )
 
+from .agents_workflow import (
+    run_agents_workflow,
+    run_agents_workflow_sync,
+)
+
 __all__ = [
     # Company Analysis (Deep Research)
     "run_company_analysis",
     "run_company_analysis_sync",
     # DCF Analysis (FMP + Claude)
     "run_dcf_analysis",
+    # Agents Workflow (BossAgent + FinancialModelingAgent)
+    "run_agents_workflow",
+    "run_agents_workflow_sync",
 ]

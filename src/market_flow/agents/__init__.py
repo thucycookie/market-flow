@@ -48,6 +48,10 @@ from .financial_tools import (
     MARKET_DATA_TOOLS,
     DCF_MODEL_TOOLS,
     ALL_FINANCIAL_TOOLS,
+    # Anthropic API tool support
+    get_anthropic_tool_schemas,
+    execute_tool,
+    TOOL_EXECUTORS,
 )
 
 __all__ = [
@@ -84,4 +88,8 @@ __all__ = [
     "MARKET_DATA_TOOLS",
     "DCF_MODEL_TOOLS",
     "ALL_FINANCIAL_TOOLS",
+    # Anthropic API tool support
+    "get_anthropic_tool_schemas",
+    "execute_tool",
+    "TOOL_EXECUTORS",
 ]

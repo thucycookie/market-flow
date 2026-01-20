@@ -8,14 +8,8 @@ determines whether the report meets quality standards.
 
 import json
 import re
-from typing import Any
 
-from claude_agent_sdk import (
-    query,
-    ClaudeAgentOptions,
-    AssistantMessage,
-    ResultMessage,
-)
+from anthropic import Anthropic
 
 
 # Review prompt for financial modeling reports
@@ -105,20 +99,18 @@ class BossAgent:
     def __init__(
         self,
         model: str = "claude-sonnet-4-20250514",
-        max_turns: int = 10,
-        permission_mode: str = "bypassPermissions",
+        max_tokens: int = 4096,
     ):
         """
         Initialize the boss agent.
 
         Args:
             model: Claude model to use (default: claude-sonnet-4)
-            max_turns: Maximum number of agent turns (default: 10)
-            permission_mode: Permission mode for tool execution
+            max_tokens: Maximum tokens per response (default: 4096)
         """
         self.model = model
-        self.max_turns = max_turns
-        self.permission_mode = permission_mode
+        self.max_tokens = max_tokens
+        self.client = Anthropic()
 
     def _get_review_prompt(self, agent_type: str) -> str:
         """
@@ -147,25 +139,6 @@ class BossAgent:
             )
 
         return prompts[agent_type]
-
-    def _get_options(self, agent_type: str) -> ClaudeAgentOptions:
-        """
-        Create ClaudeAgentOptions with agent-specific review prompt.
-
-        Args:
-            agent_type: Type of agent that produced the report
-
-        Returns:
-            ClaudeAgentOptions configured for report review
-        """
-        system_prompt = self._get_review_prompt(agent_type)
-
-        return ClaudeAgentOptions(
-            system_prompt=system_prompt,
-            model=self.model,
-            max_turns=self.max_turns,
-            permission_mode=self.permission_mode,
-        )
 
     def _parse_review_response(self, response_text: str) -> dict:
         """
@@ -219,6 +192,8 @@ class BossAgent:
                 - strengths: list - what the report did well
                 - improvements_needed: list - specific items to address
         """
+        system_prompt = self._get_review_prompt(agent_type)
+
         prompt = f"""Please review the following analyst report and evaluate it against all criteria.
 
 --- ANALYST REPORT ---
@@ -227,17 +202,18 @@ class BossAgent:
 
 Evaluate this report and provide your assessment as a JSON object."""
 
-        options = self._get_options(agent_type)
-        response_text = []
+        # Direct Anthropic API call (no tools needed for review)
+        response = self.client.messages.create(
+            model=self.model,
+            max_tokens=self.max_tokens,
+            system=system_prompt,
+            messages=[{"role": "user", "content": prompt}],
+        )
 
-        async for message in query(prompt=prompt, options=options):
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if hasattr(block, "text"):
-                        response_text.append(block.text)
+        # Extract text from response
+        response_text = ""
+        for block in response.content:
+            if hasattr(block, "text"):
+                response_text += block.text
 
-            if isinstance(message, ResultMessage):
-                break
-
-        full_response = "\n".join(response_text)
-        return self._parse_review_response(full_response)
+        return self._parse_review_response(response_text)

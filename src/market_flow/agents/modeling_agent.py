@@ -1,8 +1,8 @@
 """
 Financial Modeling Agent
 
-An AI agent that performs comprehensive financial analysis using the Claude Agent SDK.
-The agent follows a decision flow:
+An AI agent that performs comprehensive financial analysis using the Anthropic API
+with native tool use. The agent follows a decision flow:
 
 1. Fetch Market Data
 2. Run DCF Analysis (baseline valuation)
@@ -12,18 +12,12 @@ The agent follows a decision flow:
 4. Synthesize findings into investment recommendation
 """
 
-import os
-from typing import AsyncIterator
+from anthropic import Anthropic
 
-from claude_agent_sdk import (
-    query,
-    ClaudeSDKClient,
-    ClaudeAgentOptions,
-    AssistantMessage,
-    ResultMessage,
+from .financial_tools import (
+    get_anthropic_tool_schemas,
+    execute_tool,
 )
-
-from .mcp_server import create_financial_modeling_server, ALL_TOOL_NAMES
 
 
 # System prompt that instructs the agent on the analysis workflow
@@ -115,7 +109,7 @@ You have access to market data and DCF modeling tools:
 
 class FinancialModelingAgent:
     """
-    AI-powered financial modeling agent using Claude Agent SDK.
+    AI-powered financial modeling agent using Anthropic API with tool use.
 
     This agent orchestrates financial analysis by:
     1. Fetching market data via FMP tools
@@ -126,55 +120,119 @@ class FinancialModelingAgent:
     Example:
         >>> agent = FinancialModelingAgent()
         >>> result = await agent.analyze("AAPL")
-        >>> print(result["recommendation"])
+        >>> print(result["analysis"])
     """
 
     def __init__(
         self,
         model: str = "claude-sonnet-4-20250514",
-        max_turns: int = 20,
-        permission_mode: str = "bypassPermissions",
+        max_tokens: int = 8192,
+        max_tool_iterations: int = 20,
     ):
         """
         Initialize the financial modeling agent.
 
         Args:
             model: Claude model to use (default: claude-sonnet-4)
-            max_turns: Maximum number of agent turns (default: 20)
-            permission_mode: Permission mode for tool execution
+            max_tokens: Maximum tokens per response (default: 8192)
+            max_tool_iterations: Maximum tool use iterations (default: 20)
         """
         self.model = model
-        self.max_turns = max_turns
-        self.permission_mode = permission_mode
-        self._server = None
+        self.max_tokens = max_tokens
+        self.max_tool_iterations = max_tool_iterations
+        self.client = Anthropic()
+        self.tools = get_anthropic_tool_schemas()
 
-    def _get_options(self) -> ClaudeAgentOptions:
-        """Create ClaudeAgentOptions with MCP server and tools."""
-        if self._server is None:
-            self._server = create_financial_modeling_server()
+    def _execute_tool(self, name: str, args: dict) -> str:
+        """Execute a tool and return serialized result."""
+        return execute_tool(name, args)
 
-        return ClaudeAgentOptions(
-            system_prompt=FINANCIAL_ANALYST_SYSTEM_PROMPT,
-            mcp_servers={"finance": self._server},
-            allowed_tools=ALL_TOOL_NAMES,
+    def _process_tool_calls(self, response) -> list[dict]:
+        """
+        Process tool use blocks from response and execute tools.
+
+        Args:
+            response: Anthropic API response
+
+        Returns:
+            List of tool_result content blocks
+        """
+        tool_results = []
+
+        for block in response.content:
+            if block.type == "tool_use":
+                result = self._execute_tool(block.name, block.input)
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": result,
+                })
+
+        return tool_results
+
+    def _extract_text(self, response) -> str:
+        """Extract text content from response."""
+        text_parts = []
+        for block in response.content:
+            if hasattr(block, "text"):
+                text_parts.append(block.text)
+        return "\n".join(text_parts)
+
+    def _run_with_tools(
+        self,
+        system_prompt: str,
+        user_message: str,
+    ) -> tuple[str, list[dict]]:
+        """
+        Run a conversation with tool use loop.
+
+        Args:
+            system_prompt: System prompt for the conversation
+            user_message: Initial user message
+
+        Returns:
+            Tuple of (final_text, all_messages)
+        """
+        messages = [{"role": "user", "content": user_message}]
+
+        # Initial API call
+        response = self.client.messages.create(
             model=self.model,
-            max_turns=self.max_turns,
-            permission_mode=self.permission_mode,
+            max_tokens=self.max_tokens,
+            system=system_prompt,
+            tools=self.tools,
+            messages=messages,
         )
 
-    def _get_refinement_options(self) -> ClaudeAgentOptions:
-        """Create ClaudeAgentOptions for refinement with MCP tools."""
-        if self._server is None:
-            self._server = create_financial_modeling_server()
+        iteration = 0
 
-        return ClaudeAgentOptions(
-            system_prompt=REFINEMENT_SYSTEM_PROMPT,
-            mcp_servers={"finance": self._server},
-            allowed_tools=ALL_TOOL_NAMES,
-            model=self.model,
-            max_turns=self.max_turns,
-            permission_mode=self.permission_mode,
-        )
+        # Tool use loop
+        while response.stop_reason == "tool_use" and iteration < self.max_tool_iterations:
+            iteration += 1
+
+            # Execute tools and get results
+            tool_results = self._process_tool_calls(response)
+
+            # Add assistant response and tool results to messages
+            messages.append({"role": "assistant", "content": response.content})
+            messages.append({"role": "user", "content": tool_results})
+
+            # Continue conversation
+            response = self.client.messages.create(
+                model=self.model,
+                max_tokens=self.max_tokens,
+                system=system_prompt,
+                tools=self.tools,
+                messages=messages,
+            )
+
+        # Extract final text
+        final_text = self._extract_text(response)
+
+        # Add final response to messages
+        messages.append({"role": "assistant", "content": response.content})
+
+        return final_text, messages
 
     async def analyze(self, ticker: str) -> dict:
         """
@@ -201,25 +259,14 @@ class FinancialModelingAgent:
 
 Be thorough and quantitative in your analysis."""
 
-        options = self._get_options()
-        messages = []
-        analysis_text = []
-
-        async for message in query(prompt=prompt, options=options):
-            messages.append(message)
-
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if hasattr(block, "text"):
-                        analysis_text.append(block.text)
-
-            if isinstance(message, ResultMessage):
-                # Conversation complete
-                break
+        analysis_text, messages = self._run_with_tools(
+            FINANCIAL_ANALYST_SYSTEM_PROMPT,
+            prompt,
+        )
 
         return {
             "ticker": ticker.upper(),
-            "analysis": "\n".join(analysis_text),
+            "analysis": analysis_text,
             "messages": messages,
         }
 
@@ -232,7 +279,7 @@ Be thorough and quantitative in your analysis."""
         """
         Refine a previous analysis based on reviewer feedback.
 
-        The agent will use available MCP tools to address the feedback.
+        The agent will use available tools to address the feedback.
         If feedback requires tools not available, the agent will note this
         in the refined report.
 
@@ -266,31 +313,24 @@ Please refine your analysis by:
 
 Start by identifying which feedback points you can address with your available tools."""
 
-        options = self._get_refinement_options()
-        messages = []
-        analysis_text = []
-
-        async for message in query(prompt=prompt, options=options):
-            messages.append(message)
-
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if hasattr(block, "text"):
-                        analysis_text.append(block.text)
-
-            if isinstance(message, ResultMessage):
-                break
+        analysis_text, messages = self._run_with_tools(
+            REFINEMENT_SYSTEM_PROMPT,
+            prompt,
+        )
 
         return {
             "ticker": ticker.upper(),
-            "analysis": "\n".join(analysis_text),
+            "analysis": analysis_text,
             "messages": messages,
             "is_refinement": True,
         }
 
-    async def analyze_streaming(self, ticker: str) -> AsyncIterator[str]:
+    async def analyze_streaming(self, ticker: str):
         """
         Run analysis with streaming output.
+
+        Note: Streaming with tool use requires handling tool calls between streams.
+        This is a simplified implementation that yields the final result.
 
         Args:
             ticker: Stock ticker symbol
@@ -298,21 +338,9 @@ Start by identifying which feedback points you can address with your available t
         Yields:
             Text chunks as they're generated
         """
-        prompt = f"""Analyze {ticker.upper()} following the structured workflow:
-
-1. First, fetch the company profile and key financial data
-2. Run a DCF analysis to calculate intrinsic value
-3. Based on DCF results, determine the appropriate valuation model
-4. Provide your deep analysis
-5. Synthesize your findings into a clear investment recommendation"""
-
-        options = self._get_options()
-
-        async for message in query(prompt=prompt, options=options):
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if hasattr(block, "text"):
-                        yield block.text
+        # For tool use, we need to handle the full loop first
+        result = await self.analyze(ticker)
+        yield result["analysis"]
 
     async def interactive_session(self) -> None:
         """
@@ -321,27 +349,44 @@ Start by identifying which feedback points you can address with your available t
         Use this when you want to have a back-and-forth conversation
         with the agent about financial analysis.
         """
-        options = self._get_options()
+        print("Financial Modeling Agent ready. Type 'quit' to exit.")
+        print("Example: 'Analyze AAPL' or 'Compare MSFT and GOOGL'\n")
 
-        async with ClaudeSDKClient(options) as client:
-            print("Financial Modeling Agent ready. Type 'quit' to exit.")
-            print("Example: 'Analyze AAPL' or 'Compare MSFT and GOOGL'\n")
+        messages = []
 
-            while True:
-                user_input = input("You: ").strip()
-                if user_input.lower() in ("quit", "exit", "q"):
-                    break
+        while True:
+            user_input = input("You: ").strip()
+            if user_input.lower() in ("quit", "exit", "q"):
+                break
 
-                await client.query(user_input)
+            messages.append({"role": "user", "content": user_input})
 
-                async for message in client.receive_messages():
-                    if isinstance(message, AssistantMessage):
-                        for block in message.content:
-                            if hasattr(block, "text"):
-                                print(f"\nAgent: {block.text}")
+            response = self.client.messages.create(
+                model=self.model,
+                max_tokens=self.max_tokens,
+                system=FINANCIAL_ANALYST_SYSTEM_PROMPT,
+                tools=self.tools,
+                messages=messages,
+            )
 
-                    if isinstance(message, ResultMessage):
-                        break
+            # Handle tool use loop
+            while response.stop_reason == "tool_use":
+                tool_results = self._process_tool_calls(response)
+                messages.append({"role": "assistant", "content": response.content})
+                messages.append({"role": "user", "content": tool_results})
+
+                response = self.client.messages.create(
+                    model=self.model,
+                    max_tokens=self.max_tokens,
+                    system=FINANCIAL_ANALYST_SYSTEM_PROMPT,
+                    tools=self.tools,
+                    messages=messages,
+                )
+
+            # Print and save final response
+            final_text = self._extract_text(response)
+            print(f"\nAgent: {final_text}\n")
+            messages.append({"role": "assistant", "content": response.content})
 
 
 # Convenience function for simple analysis
