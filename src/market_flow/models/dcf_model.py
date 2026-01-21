@@ -435,3 +435,308 @@ def build_dcf_model(
         assumptions=assumptions,
         sensitivity_matrix=sensitivity_matrix,
     )
+
+
+# =============================================================================
+# Custom DCF Parameter Calculation Helpers
+# =============================================================================
+
+# Damodaran Equity Risk Premiums by Country (source: NYU Stern, 2024)
+# https://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/ctryprem.html
+COUNTRY_EQUITY_RISK_PREMIUMS = {
+    "United States": 4.46,
+    "Canada": 4.23,
+    "United Kingdom": 5.01,
+    "Germany": 4.23,
+    "France": 5.01,
+    "Japan": 5.14,
+    "China": 5.14,
+    "Taiwan": 5.01,
+    "Korea": 4.87,
+    "India": 7.08,
+    "Brazil": 7.47,
+    "Australia": 4.23,
+    "Singapore": 4.23,
+    "Hong Kong": 5.01,
+    "Netherlands": 4.23,
+    "Switzerland": 4.23,
+    "Sweden": 4.23,
+    "Norway": 4.23,
+    "Denmark": 4.23,
+    "Finland": 4.59,
+    "Ireland": 5.01,
+    "Israel": 6.30,
+    "Mexico": 6.69,
+    "South Africa": 8.13,
+    "Russia": 8.13,
+    "Turkey": 10.06,
+    "Argentina": 13.94,
+    "Indonesia": 6.69,
+    "Malaysia": 5.78,
+    "Thailand": 6.30,
+    "Philippines": 6.69,
+    "Vietnam": 8.13,
+}
+
+# Long-term GDP growth estimates by country/region
+COUNTRY_GDP_GROWTH = {
+    "United States": 2.5,
+    "Canada": 2.0,
+    "United Kingdom": 1.5,
+    "Germany": 1.5,
+    "France": 1.5,
+    "Japan": 1.0,
+    "China": 4.0,
+    "Taiwan": 2.5,
+    "Korea": 2.5,
+    "India": 5.0,
+    "Brazil": 2.5,
+    "Australia": 2.5,
+    "Singapore": 2.5,
+    "Hong Kong": 2.5,
+    "Netherlands": 1.5,
+    "Switzerland": 1.5,
+    "Sweden": 2.0,
+    "Norway": 2.0,
+    "Denmark": 2.0,
+    "Finland": 1.5,
+    "Ireland": 2.5,
+    "Israel": 3.0,
+    "Mexico": 2.5,
+    "Indonesia": 4.5,
+    "Malaysia": 4.0,
+    "Thailand": 3.5,
+    "Philippines": 5.0,
+    "Vietnam": 5.5,
+    "Developed": 2.0,
+    "Emerging": 4.5,
+}
+
+
+def calculate_revenue_growth_pct(
+    income_statements: list[dict],
+    periods: int | None = None,
+) -> float:
+    """
+    Calculate revenue growth percentage using CAGR from historical income statements.
+
+    Args:
+        income_statements: List of income statements (newest first)
+        periods: Number of periods to use (default: all available)
+
+    Returns:
+        Revenue growth rate as percentage (e.g., 10.5 for 10.5%)
+    """
+    # Limit periods if specified
+    statements = income_statements[:periods] if periods else income_statements
+
+    # FMP API returns newest first, but CAGR needs oldest-to-newest
+    # CAGR = (Ending/Beginning)^(1/years) - 1
+    # So we reverse to get: revenues[0]=oldest (beginning), revenues[-1]=newest (ending)
+    revenues = [stmt.get("revenue", 0) for stmt in reversed(statements)]
+    revenues = [r for r in revenues if r and r > 0]  # Filter out zeros/nulls
+
+    if len(revenues) < 2:
+        return 5.0  # Default 5% if insufficient data
+
+    years = len(revenues) - 1
+    cagr = (revenues[-1] / revenues[0]) ** (1 / years) - 1
+    return round(cagr * 100, 2)
+
+
+def calculate_capital_expenditure_pct(
+    cash_flows: list[dict],
+    income_statements: list[dict],
+    periods: int = 5,
+) -> float:
+    """
+    Calculate capital expenditure as percentage of revenue.
+
+    Uses average of recent periods to smooth out cyclical CapEx.
+
+    Args:
+        cash_flows: List of cash flow statements (newest first)
+        income_statements: List of income statements (newest first)
+        periods: Number of periods to average (default: 5)
+
+    Returns:
+        CapEx as percentage of revenue (e.g., 5.2 for 5.2%)
+    """
+    capex_pcts = []
+
+    for i in range(min(periods, len(cash_flows), len(income_statements))):
+        capex = abs(cash_flows[i].get("capitalExpenditure", 0) or 0)
+        revenue = income_statements[i].get("revenue", 0) or 0
+
+        if revenue > 0:
+            capex_pcts.append(capex / revenue)
+
+    if not capex_pcts:
+        return 5.0  # Default 5% CapEx/Revenue
+
+    avg_pct = sum(capex_pcts) / len(capex_pcts)
+    return round(avg_pct * 100, 2)
+
+
+def calculate_operating_cash_flow_pct(
+    cash_flows: list[dict],
+    income_statements: list[dict],
+    periods: int = 5,
+) -> float:
+    """
+    Calculate operating cash flow as percentage of revenue.
+
+    Args:
+        cash_flows: List of cash flow statements (newest first)
+        income_statements: List of income statements (newest first)
+        periods: Number of periods to average (default: 5)
+
+    Returns:
+        OCF as percentage of revenue (e.g., 25.0 for 25%)
+    """
+    ocf_pcts = []
+
+    for i in range(min(periods, len(cash_flows), len(income_statements))):
+        ocf = cash_flows[i].get("operatingCashFlow", 0) or 0
+        revenue = income_statements[i].get("revenue", 0) or 0
+
+        if revenue > 0:
+            ocf_pcts.append(ocf / revenue)
+
+    if not ocf_pcts:
+        return 15.0  # Default 15% OCF/Revenue
+
+    avg_pct = sum(ocf_pcts) / len(ocf_pcts)
+    return round(avg_pct * 100, 2)
+
+
+def calculate_market_risk_premium(country: str = "United States") -> float:
+    """
+    Get equity risk premium for a country from Damodaran's estimates.
+
+    Data source: https://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/ctryprem.html
+
+    Args:
+        country: Country name (e.g., "United States", "Taiwan", "Germany")
+
+    Returns:
+        Equity risk premium as percentage (e.g., 4.46 for US)
+    """
+    # Try exact match first
+    if country in COUNTRY_EQUITY_RISK_PREMIUMS:
+        return COUNTRY_EQUITY_RISK_PREMIUMS[country]
+
+    # Try case-insensitive match
+    country_lower = country.lower()
+    for key, value in COUNTRY_EQUITY_RISK_PREMIUMS.items():
+        if key.lower() == country_lower:
+            return value
+
+    # Default to US if country not found
+    return COUNTRY_EQUITY_RISK_PREMIUMS["United States"]
+
+
+def calculate_long_term_growth_rate(country: str = "United States") -> float:
+    """
+    Get long-term growth rate estimate for terminal value calculation.
+
+    Uses long-term GDP growth estimates as a proxy for terminal growth.
+    Terminal growth should not exceed long-term GDP growth.
+
+    Args:
+        country: Country name (e.g., "United States", "Taiwan")
+
+    Returns:
+        Long-term growth rate as percentage (e.g., 2.5 for 2.5%)
+
+    Note:
+        Common range: 2-3% for mature developed market companies.
+        Higher (4-5%) for emerging markets.
+    """
+    # Try exact match first
+    if country in COUNTRY_GDP_GROWTH:
+        return COUNTRY_GDP_GROWTH[country]
+
+    # Try case-insensitive match
+    country_lower = country.lower()
+    for key, value in COUNTRY_GDP_GROWTH.items():
+        if key.lower() == country_lower:
+            return value
+
+    # Default to US
+    return COUNTRY_GDP_GROWTH["United States"]
+
+
+def calculate_ebitda_pct(
+    income_statements: list[dict],
+    periods: int = 5,
+) -> float:
+    """
+    Calculate EBITDA margin as percentage of revenue.
+
+    Args:
+        income_statements: List of income statements (newest first)
+        periods: Number of periods to average (default: 5)
+
+    Returns:
+        EBITDA margin as percentage (e.g., 25.0 for 25%)
+    """
+    margins = []
+    for i in range(min(periods, len(income_statements))):
+        ebitda = income_statements[i].get("ebitda", 0) or 0
+        revenue = income_statements[i].get("revenue", 0) or 0
+        if revenue > 0:
+            margins.append(ebitda / revenue)
+
+    if not margins:
+        return 15.0  # Default 15%
+    return round(sum(margins) / len(margins) * 100, 2)
+
+
+def _calculate_effective_tax_rate(income_statements: list[dict]) -> float:
+    """Calculate effective tax rate from income statements."""
+    latest = income_statements[0] if income_statements else {}
+    income_before_tax = latest.get("incomeBeforeTax", 0) or 1
+    tax_expense = latest.get("incomeTaxExpense", 0) or 0
+
+    if income_before_tax <= 0:
+        return 0.21  # Default US corporate rate
+
+    rate = tax_expense / income_before_tax
+    return round(max(0, min(rate, 0.4)), 4)  # Bound 0-40%
+
+
+def calculate_all_dcf_parameters(
+    ticker: str,
+    periods: int = 5,
+    country: str = "United States",
+) -> dict:
+    """
+    Calculate all DCF input parameters from historical data.
+
+    Fetches financial data and computes recommended values for
+    all Custom DCF Advanced API parameters.
+
+    Args:
+        ticker: Stock ticker symbol
+        periods: Number of historical periods to fetch and use for calculations
+        country: Country for equity risk premium lookup
+
+    Returns:
+        dict with all calculated parameters ready for get_custom_dcf()
+    """
+    profile = get_company_profile(ticker)
+    income_stmts = get_income_statement(ticker, period="annual", limit=periods)
+    cash_flows = get_cash_flow(ticker, period="annual", limit=periods)
+
+    # Calculate all parameters with consistent periods
+    return {
+        "revenue_growth_pct": calculate_revenue_growth_pct(income_stmts, periods=periods),
+        "ebitda_pct": calculate_ebitda_pct(income_stmts, periods=periods),
+        "capital_expenditure_pct": calculate_capital_expenditure_pct(cash_flows, income_stmts, periods=periods),
+        "operating_cash_flow_pct": calculate_operating_cash_flow_pct(cash_flows, income_stmts, periods=periods),
+        "market_risk_premium": calculate_market_risk_premium(country=country),
+        "long_term_growth_rate": calculate_long_term_growth_rate(country=country),
+        "beta": profile.get("beta", 1.0),
+        "tax_rate": _calculate_effective_tax_rate(income_stmts),
+    }
