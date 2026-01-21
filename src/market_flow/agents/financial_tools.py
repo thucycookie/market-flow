@@ -22,6 +22,7 @@ from ..market_data.fmp_client import (
     get_quote,
     get_dcf,
     get_analyst_estimates,
+    get_custom_dcf,
 )
 from ..models.dcf_model import (
     calculate_wacc,
@@ -29,6 +30,7 @@ from ..models.dcf_model import (
     calculate_terminal_value,
     calculate_intrinsic_value,
     build_dcf_model,
+    calculate_all_dcf_parameters,
 )
 
 
@@ -535,6 +537,38 @@ def get_anthropic_tool_schemas() -> list[dict]:
                 "required": ["ticker"]
             }
         },
+        # Custom DCF Tools
+        {
+            "name": "run_custom_dcf_model",
+            "description": "Run a custom DCF valuation with fine-tuned assumptions using FMP's Custom DCF Advanced API. Calculates parameters from historical data or accepts user overrides.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "ticker": {"type": "string", "description": "Stock ticker symbol"},
+                    "revenue_growth_pct": {"type": "number", "description": "Override revenue growth % (or auto-calculate)"},
+                    "capital_expenditure_pct": {"type": "number", "description": "Override CapEx % of revenue"},
+                    "operating_cash_flow_pct": {"type": "number", "description": "Override OCF % of revenue"},
+                    "market_risk_premium": {"type": "number", "description": "Override market risk premium %"},
+                    "long_term_growth_rate": {"type": "number", "description": "Override terminal growth rate %"},
+                    "country": {"type": "string", "description": "Country for ERP/growth rate lookup", "default": "United States"},
+                    "periods": {"type": "integer", "description": "Historical periods for calculations", "default": 5}
+                },
+                "required": ["ticker"]
+            }
+        },
+        {
+            "name": "calculate_dcf_parameters",
+            "description": "Calculate recommended DCF input parameters from historical financial data including revenue growth, CapEx %, OCF %, market risk premium, and long-term growth rate",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "ticker": {"type": "string", "description": "Stock ticker symbol"},
+                    "periods": {"type": "integer", "description": "Historical periods for calculations", "default": 5},
+                    "country": {"type": "string", "description": "Country for ERP/growth rate lookup", "default": "United States"}
+                },
+                "required": ["ticker"]
+            }
+        },
     ]
 
 
@@ -546,6 +580,62 @@ def _serialize_result(data: Any) -> str:
         return json.dumps(data, indent=2)
     else:
         return str(data)
+
+
+def _run_custom_dcf_with_params(
+    ticker: str,
+    revenue_growth_pct: float | None = None,
+    capital_expenditure_pct: float | None = None,
+    operating_cash_flow_pct: float | None = None,
+    market_risk_premium: float | None = None,
+    long_term_growth_rate: float | None = None,
+    country: str = "United States",
+    periods: int = 5,
+) -> dict:
+    """
+    Run custom DCF with auto-calculated parameters for missing values.
+
+    If a parameter is not provided, it will be calculated from historical data.
+    """
+    # Calculate parameters if not provided
+    if any(p is None for p in [revenue_growth_pct, capital_expenditure_pct,
+                                operating_cash_flow_pct, market_risk_premium,
+                                long_term_growth_rate]):
+        calculated = calculate_all_dcf_parameters(ticker, periods=periods, country=country)
+
+        if revenue_growth_pct is None:
+            revenue_growth_pct = calculated["revenue_growth_pct"]
+        if capital_expenditure_pct is None:
+            capital_expenditure_pct = calculated["capital_expenditure_pct"]
+        if operating_cash_flow_pct is None:
+            operating_cash_flow_pct = calculated["operating_cash_flow_pct"]
+        if market_risk_premium is None:
+            market_risk_premium = calculated["market_risk_premium"]
+        if long_term_growth_rate is None:
+            long_term_growth_rate = calculated["long_term_growth_rate"]
+
+    # Call FMP Custom DCF API
+    result = get_custom_dcf(
+        ticker=ticker,
+        revenue_growth_pct=revenue_growth_pct,
+        capital_expenditure_pct=capital_expenditure_pct,
+        operating_cash_flow_pct=operating_cash_flow_pct,
+        market_risk_premium=market_risk_premium,
+        long_term_growth_rate=long_term_growth_rate,
+    )
+
+    # Add the parameters used to the result for transparency
+    result["parameters_used"] = {
+        "revenue_growth_pct": revenue_growth_pct,
+        "capital_expenditure_pct": capital_expenditure_pct,
+        "operating_cash_flow_pct": operating_cash_flow_pct,
+        "market_risk_premium": market_risk_premium,
+        "long_term_growth_rate": long_term_growth_rate,
+        "country": country,
+        "periods": periods,
+    }
+
+    return result
 
 
 # Tool executor mapping - maps tool names to execution functions
@@ -625,6 +715,22 @@ TOOL_EXECUTORS = {
         risk_free_rate=args.get("risk_free_rate", 0.045),
         market_premium=args.get("market_premium", 0.055),
         custom_growth_rate=args.get("custom_growth_rate"),
+    ),
+    # Custom DCF Tools
+    "run_custom_dcf_model": lambda args: _run_custom_dcf_with_params(
+        ticker=args["ticker"],
+        revenue_growth_pct=args.get("revenue_growth_pct"),
+        capital_expenditure_pct=args.get("capital_expenditure_pct"),
+        operating_cash_flow_pct=args.get("operating_cash_flow_pct"),
+        market_risk_premium=args.get("market_risk_premium"),
+        long_term_growth_rate=args.get("long_term_growth_rate"),
+        country=args.get("country", "United States"),
+        periods=args.get("periods", 5),
+    ),
+    "calculate_dcf_parameters": lambda args: calculate_all_dcf_parameters(
+        ticker=args["ticker"],
+        periods=args.get("periods", 5),
+        country=args.get("country", "United States"),
     ),
 }
 

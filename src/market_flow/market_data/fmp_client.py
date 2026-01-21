@@ -290,3 +290,93 @@ def get_analyst_estimates(
         params={"symbol": ticker.upper(), "period": period, "limit": limit},
     )
     return data if isinstance(data, list) else [data]
+
+
+def get_custom_dcf(
+    ticker: str,
+    revenue_growth_pct: float | None = None,
+    ebitda_pct: float | None = None,
+    depreciation_and_amortization_pct: float | None = None,
+    cash_and_short_term_investments_pct: float | None = None,
+    receivables_pct: float | None = None,
+    inventories_pct: float | None = None,
+    payable_pct: float | None = None,
+    ebit_pct: float | None = None,
+    capital_expenditure_pct: float | None = None,
+    operating_cash_flow_pct: float | None = None,
+    sg_and_a_pct: float | None = None,
+    tax_rate: float | None = None,
+    long_term_growth_rate: float | None = None,
+    cost_of_debt: float | None = None,
+    cost_of_equity: float | None = None,
+    market_risk_premium: float | None = None,
+    beta: float | None = None,
+    risk_free_rate: float | None = None,
+) -> dict:
+    """
+    Get custom DCF valuation with fine-tuned assumptions.
+
+    Uses FMP's Custom DCF Advanced API to calculate intrinsic value
+    with user-specified parameters. Any parameter not provided uses
+    FMP's default calculations.
+
+    Args:
+        ticker: Stock ticker symbol
+        revenue_growth_pct: Annual revenue growth rate (e.g., 10.0 for 10%)
+        ebitda_pct: EBITDA margin as % of revenue
+        depreciation_and_amortization_pct: D&A as % of revenue
+        cash_and_short_term_investments_pct: Cash as % of revenue
+        receivables_pct: AR as % of revenue
+        inventories_pct: Inventory as % of revenue
+        payable_pct: AP as % of revenue
+        ebit_pct: EBIT margin as % of revenue
+        capital_expenditure_pct: CapEx as % of revenue
+        operating_cash_flow_pct: OCF as % of revenue
+        sg_and_a_pct: SG&A as % of revenue
+        tax_rate: Corporate tax rate (e.g., 0.21 for 21%)
+        long_term_growth_rate: Terminal growth rate (e.g., 2.5 for 2.5%)
+        cost_of_debt: Interest rate on debt %
+        cost_of_equity: Required return on equity %
+        market_risk_premium: Market risk premium %
+        beta: Stock beta coefficient
+        risk_free_rate: Risk-free rate %
+
+    Returns:
+        dict with DCF valuation results including:
+        - equity_value, equity_value_per_share
+        - free_cash_flow, terminal_value
+        - enterprise_value, wacc
+    """
+    params = {"symbol": ticker.upper()}
+
+    # Map Python snake_case to FMP camelCase parameters
+    param_mapping = {
+        "revenueGrowthPct": revenue_growth_pct,
+        "ebitdaPct": ebitda_pct,
+        "depreciationAndAmortizationPct": depreciation_and_amortization_pct,
+        "cashAndShortTermInvestmentsPct": cash_and_short_term_investments_pct,
+        "receivablesPct": receivables_pct,
+        "inventoriesPct": inventories_pct,
+        "payablePct": payable_pct,
+        "ebitPct": ebit_pct,
+        "capitalExpenditurePct": capital_expenditure_pct,
+        "operatingCashFlowPct": operating_cash_flow_pct,
+        "sellingGeneralAndAdministrativeExpensesPct": sg_and_a_pct,
+        "taxRate": tax_rate,
+        "longTermGrowthRate": long_term_growth_rate,
+        "costOfDebt": cost_of_debt,
+        "costOfEquity": cost_of_equity,
+        "marketRiskPremium": market_risk_premium,
+        "beta": beta,
+        "riskFreeRate": risk_free_rate,
+    }
+
+    # Only include parameters that are not None
+    for key, value in param_mapping.items():
+        if value is not None:
+            params[key] = value
+
+    data = _make_request("custom-discounted-cash-flow", params=params)
+    if not data:
+        raise ValueError(f"No custom DCF data found for ticker: {ticker}")
+    return data[0] if isinstance(data, list) else data
