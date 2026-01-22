@@ -14,6 +14,7 @@ from ..market_data.fmp_client import (
     get_balance_sheet,
     get_key_metrics,
     get_quote,
+    get_ratios_ttm,
 )
 
 
@@ -84,9 +85,10 @@ def calculate_wacc(
     beta: float,
     risk_free_rate: float = 0.045,
     market_premium: float = 0.055,
-    debt_ratio: float = 0.3,
+    debt_ratio: float | None = None,
     cost_of_debt: float = 0.06,
     tax_rate: float = 0.21,
+    ticker: str | None = None,
 ) -> dict:
     """
     Calculate Weighted Average Cost of Capital.
@@ -95,13 +97,29 @@ def calculate_wacc(
         beta: Company's beta (systematic risk)
         risk_free_rate: Risk-free rate (default: 4.5% - 10yr Treasury)
         market_premium: Equity risk premium (default: 5.5%)
-        debt_ratio: Debt / (Debt + Equity)
+        debt_ratio: Debt / (Debt + Equity) - if None and ticker provided,
+                    auto-fetches from TTM ratios
         cost_of_debt: Pre-tax cost of debt
         tax_rate: Corporate tax rate (default: 21%)
+        ticker: Optional stock ticker to auto-fetch debt ratio from TTM ratios
 
     Returns:
         dict with WACC components and final WACC
     """
+    # Auto-fetch debt ratio from TTM ratios if ticker provided and debt_ratio not specified
+    if debt_ratio is None:
+        if ticker:
+            try:
+                ttm_ratios = get_ratios_ttm(ticker)
+                # Use debtToCapitalRatioTTM = D/(D+E) for proper WACC weights
+                debt_ratio = ttm_ratios.get("debtToCapitalRatioTTM", 0.3)
+                if debt_ratio is None:
+                    debt_ratio = 0.3
+            except Exception:
+                debt_ratio = 0.3  # Fallback if API fails
+        else:
+            debt_ratio = 0.3  # Default if no ticker provided
+
     # Cost of Equity using CAPM
     cost_of_equity = risk_free_rate + beta * market_premium
 
@@ -298,11 +316,6 @@ def build_dcf_model(
     total_debt = latest_bs.get("totalDebt", 0) or 0
     cash = latest_bs.get("cashAndCashEquivalents", 0) or 0
     net_debt = total_debt - cash
-    total_equity = latest_bs.get("totalStockholdersEquity", 1) or 1
-
-    # Calculate debt ratio
-    total_capital = total_debt + total_equity
-    debt_ratio = total_debt / total_capital if total_capital > 0 else 0.3
 
     # Estimate cost of debt from interest expense
     latest_income = income_statements[0] if income_statements else {}
@@ -316,14 +329,14 @@ def build_dcf_model(
     tax_rate = (income_tax / income_before_tax) if income_before_tax > 0 else 0.21
     tax_rate = max(0, min(tax_rate, 0.4))  # Bound between 0% and 40%
 
-    # Calculate WACC
+    # Calculate WACC (auto-fetches debt ratio from TTM ratios via ticker)
     wacc_result = calculate_wacc(
         beta=beta,
         risk_free_rate=risk_free_rate,
         market_premium=market_premium,
-        debt_ratio=debt_ratio,
         cost_of_debt=cost_of_debt,
         tax_rate=tax_rate,
+        ticker=ticker,
     )
 
     # Get historical FCF
@@ -421,8 +434,8 @@ def build_dcf_model(
         cost_of_equity=wacc_result["cost_of_equity"],
         cost_of_debt=cost_of_debt,
         tax_rate=tax_rate,
-        debt_weight=debt_ratio,
-        equity_weight=1 - debt_ratio,
+        debt_weight=wacc_result["debt_weight"],
+        equity_weight=wacc_result["equity_weight"],
         projection_years=projection_years,
         revenue_growth_rate=growth_rate,
         terminal_growth_rate=terminal_growth_rate,

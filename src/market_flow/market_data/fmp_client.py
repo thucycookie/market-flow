@@ -175,6 +175,32 @@ def get_financial_ratios(
     return data if isinstance(data, list) else [data]
 
 
+def get_ratios_ttm(ticker: str) -> dict:
+    """
+    Get trailing twelve months (TTM) financial ratios.
+
+    Unlike get_financial_ratios() which returns historical periods,
+    this returns the most recent TTM ratios for real-time analysis.
+
+    Args:
+        ticker: Stock ticker symbol (e.g., "AAPL", "TSM")
+
+    Returns:
+        dict with TTM ratios including:
+        - debtToAssetsRatioTTM, debtToEquityRatioTTM, debtToCapitalRatioTTM (leverage)
+        - currentRatioTTM, quickRatioTTM, cashRatioTTM (liquidity)
+        - grossProfitMarginTTM, netProfitMarginTTM, operatingProfitMarginTTM
+        - priceToEarningsRatioTTM, priceToBookRatioTTM, priceToSalesRatioTTM
+        - dividendYieldTTM, dividendPayoutRatioTTM
+        - assetTurnoverTTM, inventoryTurnoverTTM, receivablesTurnoverTTM
+        - effectiveTaxRateTTM, financialLeverageRatioTTM
+    """
+    data = _make_request("ratios-ttm", params={"symbol": ticker.upper()})
+    if not data:
+        raise ValueError(f"No TTM ratios found for ticker: {ticker}")
+    return data[0] if isinstance(data, list) else data
+
+
 def get_key_metrics(
     ticker: str,
     period: Literal["annual", "quarter"] = "annual",
