@@ -596,6 +596,7 @@ def _run_custom_dcf_with_params(
     Run custom DCF with auto-calculated parameters for missing values.
 
     If a parameter is not provided, it will be calculated from historical data.
+    Handles FMP API format conversion automatically.
     """
     # Calculate parameters if not provided
     if any(p is None for p in [revenue_growth_pct, capital_expenditure_pct,
@@ -614,18 +615,8 @@ def _run_custom_dcf_with_params(
         if long_term_growth_rate is None:
             long_term_growth_rate = calculated["long_term_growth_rate"]
 
-    # Call FMP Custom DCF API
-    result = get_custom_dcf(
-        ticker=ticker,
-        revenue_growth_pct=revenue_growth_pct,
-        capital_expenditure_pct=capital_expenditure_pct,
-        operating_cash_flow_pct=operating_cash_flow_pct,
-        market_risk_premium=market_risk_premium,
-        long_term_growth_rate=long_term_growth_rate,
-    )
-
-    # Add the parameters used to the result for transparency
-    result["parameters_used"] = {
+    # Store original values for transparency in result
+    original_params = {
         "revenue_growth_pct": revenue_growth_pct,
         "capital_expenditure_pct": capital_expenditure_pct,
         "operating_cash_flow_pct": operating_cash_flow_pct,
@@ -634,6 +625,44 @@ def _run_custom_dcf_with_params(
         "country": country,
         "periods": periods,
     }
+
+    # ==========================================================================
+    # FMP Custom DCF API Format Conversion
+    # ==========================================================================
+    # The FMP API expects different formats for different parameter types:
+    #
+    # 1. Parameters ending in "Pct" (revenueGrowthPct, capitalExpenditurePct, etc.)
+    #    → Expect DECIMALS: 0.2478 for 24.78%
+    #
+    # 2. marketRiskPremium, longTermGrowthRate
+    #    → Expect ACTUAL PERCENTAGES: 4.46 for 4.46%, 2.5 for 2.5%
+    #
+    # Our helper functions return human-readable percentages (24.78 for 24.78%),
+    # so we convert "Pct" parameters to decimals by dividing by 100.
+    # ==========================================================================
+
+    # Convert "Pct" parameters from percentage (24.78) to decimal (0.2478)
+    api_revenue_growth_pct = revenue_growth_pct / 100 if revenue_growth_pct else None
+    api_capital_expenditure_pct = capital_expenditure_pct / 100 if capital_expenditure_pct else None
+    api_operating_cash_flow_pct = operating_cash_flow_pct / 100 if operating_cash_flow_pct else None
+
+    # Keep marketRiskPremium and longTermGrowthRate as-is (API expects actual %)
+    api_market_risk_premium = market_risk_premium
+    api_long_term_growth_rate = long_term_growth_rate
+
+    # Call FMP Custom DCF API with converted parameters
+    result = get_custom_dcf(
+        ticker=ticker,
+        revenue_growth_pct=api_revenue_growth_pct,
+        capital_expenditure_pct=api_capital_expenditure_pct,
+        operating_cash_flow_pct=api_operating_cash_flow_pct,
+        market_risk_premium=api_market_risk_premium,
+        long_term_growth_rate=api_long_term_growth_rate,
+    )
+
+    # Add the original parameters used to the result for transparency
+    # (showing human-readable percentages, not API format)
+    result["parameters_used"] = original_params
 
     return result
 
