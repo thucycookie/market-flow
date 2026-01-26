@@ -32,6 +32,13 @@ from ..models.dcf_model import (
     build_dcf_model,
     calculate_all_dcf_parameters,
 )
+from ..models.cbcv_model import (
+    calculate_clv,
+    calculate_cac,
+    build_cbcv_model,
+    get_churn_rate_benchmark,
+    get_industry_for_ticker,
+)
 
 
 def _mcp_response(data: Any) -> dict:
@@ -569,6 +576,50 @@ def get_anthropic_tool_schemas() -> list[dict]:
                 "required": ["ticker"]
             }
         },
+        # CBCV (Customer-Based Corporate Valuation) Tools
+        {
+            "name": "run_cbcv_model",
+            "description": "Run Customer-Based Corporate Valuation for subscription/high-growth companies. Use this instead of DCF for companies with negative FCF but growing customer bases (SOFI, HOOD, NFLX, SPOT). Requires total_customers as input.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "ticker": {"type": "string", "description": "Stock ticker symbol"},
+                    "total_customers": {"type": "integer", "description": "Current total customer/subscriber count (REQUIRED)"},
+                    "arpu": {"type": "number", "description": "Annual Revenue Per User. If not provided, calculated from revenue/customers"},
+                    "churn_rate": {"type": "number", "description": "Annual churn rate (0-1). If not provided, uses industry benchmark"},
+                    "cac": {"type": "number", "description": "Customer Acquisition Cost. If not provided, estimated from S&M expense"},
+                    "new_customers": {"type": "integer", "description": "New customers added this year. Used for CAC calculation"},
+                    "projection_years": {"type": "integer", "description": "Years to project future acquisitions", "default": 10},
+                    "tam": {"type": "integer", "description": "Total Addressable Market (customer cap)"}
+                },
+                "required": ["ticker", "total_customers"]
+            }
+        },
+        {
+            "name": "calculate_clv",
+            "description": "Calculate Customer Lifetime Value using the subscription CLV formula: CLV = (ARPU × Margin) × (Retention / (1 + WACC - Retention))",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "arpu": {"type": "number", "description": "Annual Revenue Per User"},
+                    "gross_margin": {"type": "number", "description": "Gross profit margin (0-1, e.g., 0.85 for 85%)"},
+                    "retention_rate": {"type": "number", "description": "Annual customer retention rate (0-1, e.g., 0.90 for 90%)"},
+                    "discount_rate": {"type": "number", "description": "WACC or required return (0-1, e.g., 0.12 for 12%)"}
+                },
+                "required": ["arpu", "gross_margin", "retention_rate", "discount_rate"]
+            }
+        },
+        {
+            "name": "get_industry_churn_benchmark",
+            "description": "Get industry benchmark annual churn rate for a ticker. Returns churn rate and industry classification.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "ticker": {"type": "string", "description": "Stock ticker symbol"}
+                },
+                "required": ["ticker"]
+            }
+        },
     ]
 
 
@@ -761,6 +812,37 @@ TOOL_EXECUTORS = {
         periods=args.get("periods", 5),
         country=args.get("country", "United States"),
     ),
+    # CBCV Model Tools
+    "run_cbcv_model": lambda args: build_cbcv_model(
+        ticker=args["ticker"],
+        total_customers=args["total_customers"],
+        arpu=args.get("arpu"),
+        churn_rate=args.get("churn_rate"),
+        cac=args.get("cac"),
+        new_customers=args.get("new_customers"),
+        projection_years=args.get("projection_years", 10),
+        tam=args.get("tam"),
+    ),
+    "calculate_clv": lambda args: {
+        "clv": calculate_clv(
+            arpu=args["arpu"],
+            gross_margin=args["gross_margin"],
+            retention_rate=args["retention_rate"],
+            discount_rate=args["discount_rate"],
+        ),
+        "inputs": {
+            "arpu": args["arpu"],
+            "gross_margin": args["gross_margin"],
+            "retention_rate": args["retention_rate"],
+            "discount_rate": args["discount_rate"],
+        }
+    },
+    "get_industry_churn_benchmark": lambda args: {
+        "ticker": args["ticker"],
+        "industry": get_industry_for_ticker(args["ticker"]),
+        "churn_rate": get_churn_rate_benchmark(args["ticker"]),
+        "retention_rate": 1 - get_churn_rate_benchmark(args["ticker"]),
+    },
 }
 
 
