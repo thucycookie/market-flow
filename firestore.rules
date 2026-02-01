@@ -1,0 +1,17 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /dcf_results/{ticker} {
+      allow read: if true;
+
+      match /snapshots/{date} {
+        allow read: if true;
+      }
+    }
+
+    match /meta/{document} {
+      allow read: if true;
+    }
+  }
+}
